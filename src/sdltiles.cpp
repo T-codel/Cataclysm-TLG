@@ -647,8 +647,10 @@ static void WinCreate()
         || ( window_flags & CATA_WINDOW_MAXIMIZED ) ) {
         GetWindowSize( ::window.get(), &WindowWidth, &WindowHeight );
         // Ignore previous values, use the whole window, but nothing more.
-        TERMINAL_WIDTH = WindowWidth / fontwidth / scaling_factor;
-        TERMINAL_HEIGHT = WindowHeight / fontheight / scaling_factor;
+        TERMINAL_WIDTH = std::max( WindowWidth / fontwidth / scaling_factor,
+                                   EVEN_MINIMUM_TERM_WIDTH );
+        TERMINAL_HEIGHT = std::max( WindowHeight / fontheight / scaling_factor,
+                                    EVEN_MINIMUM_TERM_HEIGHT );
     }
 #endif
     // Initialize framebuffer caches
@@ -6326,28 +6328,6 @@ int projected_window_height()
     return get_option<int>( "TERMINAL_Y" ) * fontheight;
 }
 
-// Measures scaling factor for high-dpi displays
-static std::pair<float, float> get_display_scale( int display_index )
-{
-    SDL_Window_Ptr probe = CreateGameWindow( "probe", display_index, 16, 16,
-                           CATA_WINDOW_HIDDEN | CATA_WINDOW_HIGH_DPI );
-    if( !probe ) {
-        return std::make_pair( 1.0f, 1.0f );
-    }
-
-    int lw = 0;
-    int lh = 0;
-    GetWindowSize( probe.get(), &lw, &lh );
-    int pw = 0;
-    int ph = 0;
-    GetWindowSizeInPixels( probe.get(), &pw, &ph );
-    probe.reset();
-
-    float scale_w = lw ? static_cast<float>( pw ) / static_cast<float>( lw ) : 1.0f;
-    float scale_h = lh ? static_cast<float>( ph ) / static_cast<float>( lh ) : 1.0f;
-    return std::make_pair( scale_w, scale_h );
-}
-
 static void init_term_size_and_scaling_factor()
 {
     scaling_factor = 1;
@@ -6379,7 +6359,7 @@ static void init_term_size_and_scaling_factor()
                                                  EVEN_MINIMUM_TERM_HEIGHT * fontheight,
                                                  CATA_WINDOW_RESIZABLE | CATA_WINDOW_HIGH_DPI | CATA_WINDOW_MAXIMIZED );
 
-                GetWindowSizeInPixels( test_window.get(), &max_width, &max_height );
+                GetWindowSize( test_window.get(), &max_width, &max_height );
 
                 // If the video subsystem isn't reset the test window messes things up later
                 test_window.reset();
@@ -6388,9 +6368,8 @@ static void init_term_size_and_scaling_factor()
 
             } else {
                 // For fullscreen or window borderless maximum size is the display size
-                auto [ dpi_scale_w, dpi_scale_h ] = get_display_scale( current_display_id );
-                max_width = dpi_scale_w * current_display.w;
-                max_height = dpi_scale_h * current_display.h;
+                max_width = current_display.w;
+                max_height = current_display.h;
             }
         } else {
             dbg( D_WARNING ) << "Failed to get current Display Mode, assuming infinite display size.";
@@ -6398,30 +6377,23 @@ static void init_term_size_and_scaling_factor()
             max_height = INT_MAX;
         }
 
-        if( terminal.x * fontwidth > max_width ||
-            EVEN_MINIMUM_TERM_WIDTH * fontwidth * scaling_factor > max_width ) {
-            if( EVEN_MINIMUM_TERM_WIDTH * fontwidth * scaling_factor > max_width ) {
-                dbg( D_WARNING ) << "SCALING_FACTOR set too high for display size, resetting to 1";
-                scaling_factor = 1;
-                terminal.x = max_width / fontwidth;
-                terminal.y = max_height / fontheight;
-                get_options().get_option( "SCALING_FACTOR" ).setValue( "1" );
-            } else {
-                terminal.x = max_width / fontwidth;
-            }
+        const auto minimum_fits = [max_width, max_height]( const int factor ) {
+            return EVEN_MINIMUM_TERM_WIDTH * fontwidth * factor <= max_width &&
+                   EVEN_MINIMUM_TERM_HEIGHT * fontheight * factor <= max_height;
+        };
+        if( !minimum_fits( scaling_factor ) ) {
+            scaling_factor = scaling_factor == 4 && minimum_fits( 2 ) ? 2 : 1;
+            dbg( D_WARNING ) << "SCALING_FACTOR set too high for display size, reducing to " <<
+                             scaling_factor;
+            get_options().get_option( "SCALING_FACTOR" ).setValue( std::to_string( scaling_factor ) );
         }
 
-        if( terminal.y * fontheight > max_height ||
-            EVEN_MINIMUM_TERM_HEIGHT * fontheight * scaling_factor > max_height ) {
-            if( EVEN_MINIMUM_TERM_HEIGHT * fontheight * scaling_factor > max_height ) {
-                dbg( D_WARNING ) << "SCALING_FACTOR set too high for display size, resetting to 1";
-                scaling_factor = 1;
-                terminal.x = max_width / fontwidth;
-                terminal.y = max_height / fontheight;
-                get_options().get_option( "SCALING_FACTOR" ).setValue( "1" );
-            } else {
-                terminal.y = max_height / fontheight;
-            }
+        if( terminal.x * fontwidth > max_width ) {
+            terminal.x = max_width / fontwidth;
+        }
+
+        if( terminal.y * fontheight > max_height ) {
+            terminal.y = max_height / fontheight;
         }
 
         terminal.x -= terminal.x % scaling_factor;

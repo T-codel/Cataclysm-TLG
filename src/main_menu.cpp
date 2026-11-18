@@ -387,7 +387,7 @@ holiday main_menu::get_holiday_from_time()
 
 void main_menu::init_windows()
 {
-    if( LAST_TERM == point( TERMX, TERMY ) ) {
+    if( w_open && LAST_TERM == point( TERMX, TERMY ) ) {
         return;
     }
 
@@ -616,6 +616,8 @@ bool main_menu::opening_screen()
     }
 
     background_pane background;
+
+    init_windows();
 
     ui_adaptor ui;
     ui.on_redraw( [&]( const ui_adaptor & ) {
