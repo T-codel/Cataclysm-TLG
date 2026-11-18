@@ -1047,14 +1047,15 @@ std::optional<point> input_context::get_coordinates_text( const catacurses::wind
     }
     const window_dimensions dim = get_window_dimensions( capture_win );
     const int scaling_factor = get_scaling_factor();
-    point logical_coordinate = coordinate;
+    const SDL_Point buffer_pt = window_to_display_buffer_coords(
+                                    SDL_Point{ coordinate.x, coordinate.y } );
+    const point logical_coordinate( buffer_pt.x, buffer_pt.y );
     int fw = dim.scaled_font_size.x;
     int fh = dim.scaled_font_size.y;
 
-    // convert coordinate and font sizeto logical if UI is scaled
+    // The pointer coordinate is already in display_buffer space. Convert only
+    // the font dimensions, which are still expressed in scaled window pixels.
     if( scaling_factor > 1 ) {
-        logical_coordinate.x /= scaling_factor;
-        logical_coordinate.y /= scaling_factor;
         fw /= scaling_factor;
         fh /= scaling_factor;
     }

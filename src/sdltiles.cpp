@@ -1138,16 +1138,28 @@ SDL_Point window_to_display_buffer_coords( SDL_Point window_pt )
         static_cast<int>( static_cast<int64_t>( window_pt.y - dstrect.y ) * buf_h / dstrect.h )
     };
 #else
-    // Use the SDL provided translation of scaling and casting for SDL3 builds
-    if( renderer ) {
-        float rx = 0.0f;
-        float ry = 0.0f;
-        if( SDL_RenderCoordinatesFromWindow( renderer.get(),
-                                             static_cast<float>( window_pt.x ), static_cast<float>( window_pt.y ), &rx, &ry ) ) {
-            return SDL_Point{ static_cast<int>( rx ), static_cast<int>( ry ) };
-        }
+    int win_w = 0;
+    int win_h = 0;
+    GetWindowSize( ::window.get(), &win_w, &win_h );
+    const point drawable = compute_drawable_dims();
+    if( win_w <= 0 || win_h <= 0 || drawable.x <= 0 || drawable.y <= 0 ) {
+        return window_pt;
     }
-    return window_pt;
+
+    // Convert logical window coordinates to backing-store drawable pixels
+    const float draw_x = static_cast<float>( window_pt.x ) * drawable.x / win_w;
+    const float draw_y = static_cast<float>( window_pt.y ) * drawable.y / win_h;
+
+    // Invert get_display_buffer_render_rect() from drawable pixels into display_buffer coordinates
+    const SDL_Rect dstrect = get_display_buffer_render_rect();
+    if( dstrect.w <= 0 || dstrect.h <= 0 ) {
+        return window_pt;
+    }
+
+    return SDL_Point{
+        static_cast<int>( ( draw_x - dstrect.x ) * buf_w / dstrect.w ),
+        static_cast<int>( ( draw_y - dstrect.y ) * buf_h / dstrect.h )
+    };
 #endif
 }
 
@@ -6724,16 +6736,10 @@ input_event input_manager::get_input_event( const keyboard_mode preferred_keyboa
         CheckMessages();
     }
 
-    // Sample the raw mouse position (window coords) and convert into
-    // display_buffer coords so canonical gameplay picking matches the
-    // domain tile draws use.
-    {
-        point raw;
-        GetMouseState( &raw.x, &raw.y );
-        const SDL_Point buf_pt = window_to_display_buffer_coords( SDL_Point{ raw.x, raw.y } );
-        last_input.mouse_pos.x = buf_pt.x;
-        last_input.mouse_pos.y = buf_pt.y;
-    }
+    // Keep input_event coordinates in SDL window space. input_context applies
+    // SCALING_FACTOR for picking, and edge scrolling compares against window
+    // dimensions; converting to display_buffer coordinates here would scale twice.
+    GetMouseState( &last_input.mouse_pos.x, &last_input.mouse_pos.y );
     if( last_input.type == input_event_t::keyboard_char ) {
         previously_pressed_key = last_input.get_first_input();
 #if defined(__ANDROID__)
@@ -6850,16 +6856,16 @@ std::optional<tripoint_bub_ms> input_context::get_coordinates( const catacurses:
     const catacurses::window &capture_win = capture_win_ ? capture_win_ : g->w_terrain;
     const window_dimensions dim = get_window_dimensions( capture_win );
 
+    const SDL_Point buffer_pt = window_to_display_buffer_coords(
+                                    SDL_Point{ coordinate.x, coordinate.y } );
     const point &win_min = dim.window_pos_pixel;
     point win_size = dim.window_size_pixel;
-    point logical_coordinate = coordinate;
+    point logical_coordinate( buffer_pt.x, buffer_pt.y );
     const int scaling_factor = get_scaling_factor();
 
-    // convert window size and coordinate to logical if UI is scaled
+    // The pointer coordinate is already in display_buffer space. Convert only
+    // the UI geometry, which is still expressed in scaled window pixels.
     if( scaling_factor > 1 ) {
-        logical_coordinate.x /= scaling_factor;
-        logical_coordinate.y /= scaling_factor;
-
         const bool is_terrain_or_overmap = ( use_tiles && g && capture_win == g->w_terrain ) ||
                                            ( use_tiles && use_tiles_overmap && g && capture_win == g->w_overmap );
         if( !is_terrain_or_overmap ) {
